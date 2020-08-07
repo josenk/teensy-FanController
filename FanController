@@ -1,0 +1,266 @@
+#!/usr/bin/python3
+
+import serial
+import sys                        # For args
+import os.path                    # To check if file exists
+import datetime
+import time
+import threading
+import yaml
+
+
+isDebug          = False
+isVerbose        = False
+comPort          = '/dev/ttyACM0'
+PollInterval     = 30
+logFile          = "/var/log/fanController.log"
+
+#  Declare vars
+tempFromSerial   = {}
+fanFromSerial    = {}
+sendDataToSerial = []
+
+
+if os.path.exists("/etc/FanController.yml"):
+    rawData = yaml.safe_load(open("/etc/FanController.yml"))
+else:
+    print("Unable to access config")
+    sys.exit(1)
+
+
+#
+#  Functions
+#
+def writeLog(logMessage):
+    '''This function writes a line to the logs in /var/log'''
+    if isVerbose == True:
+        print("%s\n" % (logMessage.rstrip()))
+
+    activitylogFileFH.write("%s\n" % (logMessage.rstrip()))
+
+    return
+
+
+#
+#  Main()
+#
+
+#  Config for this application
+if isVerbose:
+    print("Config: %s" % rawData.get('Config'))
+for configItem in rawData.get('Config'):
+    if configItem.get('isVerbose') is not None:
+        isVerbose = configItem.get('isVerbose')
+        if isVerbose:
+            print("Set isVerbose: %s" % isVerbose)
+    if configItem.get('SerialPort') is not None:
+        comPort = configItem.get('SerialPort')
+        if isVerbose:
+            print("Set comPort: %s" % comPort)
+    if configItem.get('PollInterval') is not None:
+        PollInterval = configItem.get('PollInterval')
+        if isVerbose:
+            print("Set PollInterval: %s" % PollInterval)
+    if configItem.get('LogFile') is not None:
+        logFile = configItem.get('LogFile')
+        if isVerbose:
+            print("Set logFile: %s" % logFile)
+    if configItem.get('isDebug') is not None:
+        isDebug = configItem.get('isDebug')
+        if isVerbose:
+            print("Set isDebug: %s" % isDebug)
+
+
+#  Create configGroup dictionary.  This puts the data from the yaml file by Temp probe.
+configGroup = {}
+for group in rawData.get('Groups'):
+    grpName = str(list(group.keys())[0])
+    groupValues = group.values()
+
+    thisGroupName  = ''
+    thisGroupTemps = ''
+    thisGroupMin   = ''
+    thisGroupMax   = ''
+    thisGroupMode  = ''
+    thisGroupFans  = ''
+
+    if isVerbose:
+        print("Group: %s" % grpName)
+    for item0 in groupValues:
+        for item1 in item0:
+            if item1.get('Name') is not None:
+                thisGroupName = item1.get('Name')
+                    
+            if item1.get('Temps') is not None:
+                if len(item1.get('Temps')[0]) > 1:
+                    thisGroupTemps = item1.get('Temps')
+                else:
+                    thisGroupTemps = [item1.get('Temps')]
+
+                    
+            if item1.get('Min') is not None:
+                thisGroupMin = item1.get('Min')
+                    
+            if item1.get('Max') is not None:
+                thisGroupMax = item1.get('Max')
+                    
+            if item1.get('Mode') is not None:
+                thisGroupMode = item1.get('Mode')
+                    
+            if item1.get('Fans') is not None:
+                if len(item1.get('Fans')[0]) > 1:
+                    thisGroupFans = item1.get('Fans')
+                else:
+                    thisGroupFans = [item1.get('Fans')]
+
+            if thisGroupName != '' and thisGroupTemps != '' and thisGroupMin != '' and thisGroupMax != '' and thisGroupMode != '' and thisGroupFans != '':
+                for temp in thisGroupTemps:
+                    configGroup[temp] = {}
+                    configGroup[temp]['Name'] = thisGroupName
+                    configGroup[temp]['Temps'] = thisGroupTemps
+                    configGroup[temp]['Min'] = thisGroupMin
+                    configGroup[temp]['Max'] = thisGroupMax
+                    configGroup[temp]['Mode'] = thisGroupMode
+                    configGroup[temp]['Fans'] = thisGroupFans
+
+if isVerbose:
+    print("Group: %s" % configGroup)
+
+try:
+    activitylogFileFH = open(logFile, "a")
+    writeLog("action=\"starting service\"")
+except:
+    print("Error: Unable to write to activity log. %s" % sys.exc_info()[1])
+    sys.exit(1)
+
+#  Define serialPort configuration
+try:
+    serialPort = serial.Serial(port = comPort, baudrate=115200,
+        bytesize=8, timeout=2, stopbits=serial.STOPBITS_ONE)
+except:
+    print("Error: Unable to access SerialPort.\n %s" % sys.exc_info()[1])
+    writeLog("Error: Unable to access SerialPort. %s" % sys.exc_info()[1])
+    sys.exit(1) 
+
+
+#  Sending requests to SerialPort
+def sendToSerial():
+    '''This function runs every "PollInterval" seconds.  It sends data to the serial port'''
+    threading.Timer(int(PollInterval), sendToSerial).start()
+
+    global sendDataToSerial
+
+    for sendData in sendDataToSerial:
+        serialPort.write(sendData.encode())
+        time.sleep(1)
+    sendDataToSerial = []
+
+    serialPort.write("get fan all\n".encode())
+    time.sleep(1)
+    serialPort.write("get temp all\n".encode())
+
+sendToSerial()
+
+
+#  Read SerialPort for data
+while True:
+    received = ''
+
+    if(serialPort.in_waiting > 0):
+        serialString = serialPort.readline()
+        writeLog(serialString.decode('Ascii'))
+
+        if 'Temp0=' in serialString.decode('Ascii'):
+            _, tempFromSerial['Temp0'] = serialString.decode('Ascii').split('=')
+            received = 'Temp0'
+
+        elif 'Temp1=' in serialString.decode('Ascii'):
+            _, tempFromSerial['Temp1'] = serialString.decode('Ascii').split('=')
+            received = 'Temp1'
+        
+        elif 'Temp2=' in serialString.decode('Ascii'):
+            _, tempFromSerial['Temp2'] = serialString.decode('Ascii').split('=')
+            received = 'Temp2'
+
+        elif 'Temp3=' in serialString.decode('Ascii'):
+            _, tempFromSerial['Temp3'] = serialString.decode('Ascii').split('=')
+            received = 'Temp3'
+
+        elif 'Temp4=' in serialString.decode('Ascii'):
+            _, tempFromSerial['Temp4'] = serialString.decode('Ascii').split('=')
+            received = 'Temp4'
+
+        elif 'Temp5=' in serialString.decode('Ascii'):
+            _, tempFromSerial['Temp5'] = serialString.decode('Ascii').split('=')
+            received = 'Temp5'
+
+        if 'FanSpeed0=' in serialString.decode('Ascii'):
+            _, fanFromSerial['FanSpeed0'] = serialString.decode('Ascii').split('=')
+            received = 'FanSpeed0'
+
+        elif 'FanSpeed1=' in serialString.decode('Ascii'):
+            _, fanFromSerial['FanSpeed1'] = serialString.decode('Ascii').split('=')
+            received = 'FanSpeed1'
+        
+        elif 'FanSpeed2=' in serialString.decode('Ascii'):
+            _, fanFromSerial['FanSpeed2'] = serialString.decode('Ascii').split('=')
+            received = 'FanSpeed2'
+
+        elif 'FanSpeed3=' in serialString.decode('Ascii'):
+            _, fanFromSerial['FanSpeed3'] = serialString.decode('Ascii').split('=')
+            received = 'FanSpeed3'
+
+        
+    
+    if received == '':
+        time.sleep(.25)
+        continue
+
+    if (isVerbose == True) and (received != ''):
+        print("Received data: %s" % received)
+
+
+    #  Process serialPort data
+    if received.startswith('Temp'):
+        try:
+            if configGroup[received]['Temps'][-1] == received:
+                if configGroup[received]['Mode'] == "Avg" or configGroup[received]['Mode'] == "Default":
+                    sumOfTemps = 0
+                    for temp in configGroup[received]['Temps']:
+                        if isVerbose:
+                            print("Avg - temp: %s / %f" % (temp, float(tempFromSerial[temp])))
+                        sumOfTemps += float(tempFromSerial[temp])
+                    calculatedTempFromSerial = sumOfTemps / len(configGroup[received]['Temps'])
+
+                elif configGroup[received]['Mode'] == "Max":
+                    maxTemp = 0
+                    for temp in configGroup[received]['Temps']:
+                        if isVerbose:
+                            print("Max - temp: %s / %f" % (temp, float(tempFromSerial[temp])))
+                        if float(tempFromSerial[temp]) > maxTemp:
+                            maxTemp = float(tempFromSerial[temp])
+                    calculatedTempFromSerial = maxTemp
+                else:
+                    writeLog("Error Calculating TempFromSerial")
+                    calculatedTempFromSerial = float(tempFromSerial[temp])
+
+
+                newFanSpeed = (((calculatedTempFromSerial - configGroup[received]['Min']) * 100) / (configGroup[received]['Max'] - configGroup[received]['Min']))
+                if newFanSpeed > 100:
+                    newFanSpeed = 100
+                elif newFanSpeed < 0:
+                    newFanSpeed = 0
+    
+                writeLog("Group: %s/%s  Min: %s  Max: %s Calc Temp: %.1f Fans: %s NewFanSpeed: %d" %
+                     (configGroup[received]['Name'], received, configGroup[received]['Min'], configGroup[received]['Max'], calculatedTempFromSerial, configGroup[received]['Fans'], newFanSpeed))
+    
+                for fan in configGroup[received]['Fans']:
+                    fanID = fan[8:]
+                    if isVerbose:
+                        print("Fan: %s, ID: %s" % (fan, fanID))
+                    sendDataToSerial.append("set fan %d %d\n" % (int(fanID), int(newFanSpeed)))
+        except:
+            #  Probably mis-configured yaml file, or a Temp Probe that is not part of any Group.
+            pass
+
+    activitylogFileFH.flush()

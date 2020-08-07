@@ -1,0 +1,30 @@
+Groups:
+  - HotWater:
+    - Name: HotWater
+    - Temps:
+      - Temp0
+      - Temp1
+    - Min: 31.0
+    - Max: 38.0
+    - Mode: Avg
+    - Fans:
+      - FanSpeed0
+      - FanSpeed1
+  - Ambiant:
+    - Name: Ambiant
+    - Temps: Temp5
+    - Min: 23
+    - Max: 32
+    - Mode: Default
+    - Fans: FanSpeed2
+  - Raid:
+    - Name: Raid
+    - Temps: Temp4
+    - Min: 35.0
+    - Max: 45.0
+    - Mode: Default
+    - Fans: FanSpeed3
+Config:
+  - SerialPort: /dev/ttyACM0
+  - PollInterval: 20
+  - LogFile: /var/log/fanController.log
